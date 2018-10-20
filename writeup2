@@ -1,0 +1,17 @@
+
+ou on peu juste 
+
+On va récupérer dans l'iso le fichier: /caser/filesystem.squashfs
+On le unsquashfs.
+
+docker-machine create -d virtualbox oui
+eval $(docker-machine env oui)
+docker run -ti --rm --name=oui ubuntu
+apt-get update
+apt-get install squashfs-tools
+docker cp Desktop/filesystem.squashfs oui:/
+unsquashfs filesystem.squashfs
+docker cp oui:/squashfs-root Desktop/
+
+Bon bah on a accès à tout, alors allons vois ce qu'il y a dans: /home/thor
+On y trouve l'un des challenges à completer pour se log en ssh et ainsi skip une partie du walkthrough. ^^

